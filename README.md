@@ -3,6 +3,6 @@
 ## Tasks
 
 
-1. [ ] Import data
-2. [ ] print data
-3. [ ]
+1. [x] Import data
+2. [x] print data
+3. [ ] implement a ffn
