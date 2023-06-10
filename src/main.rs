@@ -1,12 +1,18 @@
-use std::io::Read;
+use std::{io::Read, sync::Arc};
 use ndarray::*;
 use std::io::Write;
+use Layer::*;
 
-
-
-#[warn(dead_code)]
+/// A Feed Forward Network to be used on mnist data
+/// Input a 28*28 = 784.
+/// output a 10 length vector of probs 
+/// have a function that take the index of max element and return that to 
+/// get classification.
+#[derive(Debug)]
 struct FeedForwardNetwork {
-    epoch: u32,
+    layers: Vec<Layer>,
+    weights: Vec<Array2<f64>>,
+    biases: Vec<Array1<f64>>,
 
 }
 
@@ -15,18 +21,90 @@ impl FeedForwardNetwork {
 
     // create a new ffn object
     fn new() -> FeedForwardNetwork {
-        FeedForwardNetwork { epoch: 0 }
+        FeedForwardNetwork {
+            layers: Vec::new(),
+            weights: Vec::new(),
+            biases: Vec::new(),
+        }
+
     }
 
-    fn train() {
+
+    /// Train the network on the training images and labels
+    pub fn train(epochs: u32) {
         todo!()
     }
 
-    fn test() {
+    pub fn test() {
+
+    }
+
+    /// adds a layer to to the network
+    pub fn add_layer(mut self, layer: Layer) -> Self {
+        // TODO: need to update size of weights and biases tensors
+
+        self.layers.push(layer);
+
+        match layer {
+            ReLU(n_nuerons) => {
+
+                self.add_weight_and_bias_dim(n_nuerons);
+                
+            },
+
+            Flatten(_) => { // assume it is always input
+                
+                
+            },
+
+            SoftMax(n_nuerons) => {
+
+                self.add_weight_and_bias_dim(n_nuerons);
+
+            }
+            
+        }
+
+        return self;
+
+    }
+
+    fn add_weight_and_bias_dim(&mut self, n_nuerons: usize) -> &Self {
+
+
+        let n_layers = self.layers.len();
+
+        // -2 since indexing starts on 0
+        let n_nuerons_last_layer: usize = self.layers[n_layers - 2].get_n_neurons();
+
+
+        // update weights dim
+        self.weights.push(Array2::<f64>::zeros((n_nuerons, n_nuerons_last_layer)));
+
+        return self;
 
     }
 
 
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Layer{
+    Flatten(usize),
+    ReLU(usize),
+    SoftMax(usize), 
+} 
+
+impl Layer {
+    fn get_n_neurons(&self) -> usize {
+
+        match self {
+            Flatten(val) => *val,
+            ReLU(val) => *val,
+            SoftMax(val) => *val,
+        }
+        
+    }
 }
 
 
@@ -104,13 +182,8 @@ fn get_training_images() -> ArrayBase<OwnedRepr<f64>, Dim<[usize; 3]>> {
     }
 
     // convert to array
-    let data_array: ArrayBase<OwnedRepr<f64>, Dim<[usize; 1]>> = Array::from(clean_data_f64);
 
-
-    // convert to right shape
-    let data_array: ArrayBase<OwnedRepr<f64>, Dim<[usize; 3]>> = data_array.into_shape((n_images, n_rows, n_cols)).unwrap();
-
-    
+    let data_array: Array3<f64> = Array::from_shape_vec((n_images, n_rows, n_cols) ,clean_data_f64).expect("Error: wrong shape");
 
 
     return data_array;
@@ -164,7 +237,6 @@ fn print_picture(
 
 
 fn main() {
-    FeedForwardNetwork::new();
 
     let training_labels = get_training_labels();
 
@@ -175,6 +247,27 @@ fn main() {
     for i in 0..5 {
         print_picture(i, &training_images, &training_labels);
     }
+
+    let network: FeedForwardNetwork = FeedForwardNetwork::new()
+        .add_layer(Flatten(2))
+        .add_layer(ReLU(4))
+        .add_layer(SoftMax(3));
+
+    for weight in network.weights.iter() {
+        println!("{:?}", weight);
+    }
+        
+
+    // let test: Vec<f64> = vec![0.0; 4];
+
+    // //create dynamic array
+    // let mut weigths: ArrayD<f64> = ArrayD::<f64>::zeros(IxDyn(&[0]));
+
+    // println!("{:?}", weigths);
+
+    // weigths = ArrayD::<f64>::zeros(IxDyn(&[]));
+
+    // println!("{:?}", weigths);
     
 
 } 
