@@ -15,6 +15,10 @@ use ndarray_rand::rand_distr::num_traits::{pow, Pow};
 use std::time::Duration;
 
 
+// blas
+extern crate blas_src;
+
+
 // threading 
 use std::thread;
 use std::thread::JoinHandle;
