@@ -1,9 +1,16 @@
+use std::io::Write;
 use std::{io::Read};
 use ndarray::*;
-use std::io::Write;
+// use std::io::Write;
 use Layer::*;
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Normal;
+
+// used to print colorized std out 
+use colored::Colorize;
+
+// progressbar 
+
 
 
 // threading 
@@ -46,10 +53,10 @@ impl FeedForwardNetwork {
         training_labels: &Array1<u8>,  
     ) {
 
+        println!("{}", "Start training...".red());
+
         //learning rate 
         let eta: f64 = 1.0;
-
-        print!("{}", "Training on epoch:");
 
         let shape_images: &[usize] = &training_images.shape();
 
@@ -59,10 +66,11 @@ impl FeedForwardNetwork {
 
         self.initialize_weights_and_biases(n_neurons_input_layer);
 
-        for epoch in 0..epochs {
+        'epoch_loop: for epoch in 0..epochs {
 
 
-            dbg!(epoch + 1);
+            println!("Training on epoch: {}/{}", epoch + 1, epochs);
+            // std::io::stdout().flush().expect("Failed to flush stdout");
             
 
             // initialize gradients 
@@ -80,6 +88,7 @@ impl FeedForwardNetwork {
 
             }
 
+            let pb = indicatif::ProgressBar::new(n_images as u64);
 
             // TODO: parallelize this
             for i in 0..n_images {
@@ -119,7 +128,13 @@ impl FeedForwardNetwork {
 
                 }  
 
+                
+                pb.inc(1);
+
             }
+
+            pb.finish();
+            println!("Took {:?}", pb.elapsed());
 
             // Update weights W^l = W^l - grad(W^l)
             // remember grad(W^l) = mean(dC_x/dW^l)
@@ -129,8 +144,11 @@ impl FeedForwardNetwork {
             
             // Update weights b^l = b^l - grad(b^l)
             // grad(b^l) = mean(dC_x/db^l) = mean(delta^l_x)
+            
+            print!("\n");
         }
 
+        println!("\n{}", "Finished training".green());
 
     }
 
@@ -528,8 +546,8 @@ fn print_picture(
     // https://notes.burke.libbey.me/ansi-escape-codes/
 
 
-    let stdout = std::io::stdout();
-    let mut handle = std::io::BufWriter::new(stdout);
+    // let stdout = std::io::stdout();
+    // let mut handle = std::io::BufWriter::new(stdout);
     
     for i in 0..n_rows {
         for j in 0..n_cols {
@@ -539,16 +557,15 @@ fn print_picture(
 
             // print!("{}", pixel.truecolor(pix_val, pix_val, pix_val));
 
-            write!(handle, "\x1b[48;2;{};{};{}m  ", pix_val, pix_val, pix_val).expect("failed to write to handle");
-
+            print!("\x1b[48;2;{};{};{}m  ", pix_val, pix_val, pix_val);
         }
 
-        write!(handle, "\x1b[0m\n").expect("failed to write to handle");
+        print!("\x1b[0m\n");
     }
 
-    handle.write_all(b"\n").expect("failed to write out all");
+    println!("\n");
 
-
+    
 }
 
 
@@ -576,12 +593,9 @@ fn main() {
         //.add_layer(ReLU(128))
         .add_layer(SoftMax(10));
 
-    for weight in network.weights.iter() {
-        println!("{:?}", weight);
-    }
 
-
-    network.train(10, &scaled_training_images, &training_labels);
+    
+    network.train(5, &scaled_training_images, &training_labels);
 
     
     let test_image: Array2<f64> = scaled_test_images.slice(s![0, .., ..]).to_owned();
