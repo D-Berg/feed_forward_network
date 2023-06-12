@@ -53,7 +53,7 @@ impl FeedForwardNetwork {
         training_labels: &Array1<u8>,  
     ) {
 
-        println!("{}", "Start training...".red());
+        println!("{}", "Start training...\n".red());
 
         let mut total_training_time: Duration= Duration::new(0, 0);
 
@@ -71,7 +71,7 @@ impl FeedForwardNetwork {
         'epoch_loop: for epoch in 0..epochs {
 
 
-            println!("Training on epoch: {}/{}", epoch + 1, epochs);
+            println!("{} {}/{}", "Epoch:".blue(), epoch + 1, epochs);
             // std::io::stdout().flush().expect("Failed to flush stdout");
             
 
@@ -178,7 +178,15 @@ impl FeedForwardNetwork {
 
             pb.finish();
             let epoch_time: Duration =  pb.elapsed();
-            println!("Took {:?}, Accuracy: {}", epoch_time, accuracy);
+
+            println!(
+                "{} {:?}, {} {}", 
+                "Time:".blue(),
+                epoch_time,
+                "Accuracy:".blue(),
+                accuracy
+            );
+
             total_training_time += pb.elapsed();
             
             print!("\n");
@@ -602,25 +610,25 @@ fn get_images(file_name: &str) ->Array3<f64> {
     let un_clean_data: Vec<u8> = read_in_data(file_name);
 
 
-    dbg!(&un_clean_data[0..4]);
+    // dbg!(&un_clean_data[0..4]);
 
     let n: usize = un_clean_data.len();
 
     let n_images_binary: &[u8; 4] = &un_clean_data[4..8].try_into().unwrap();
     
     let n_images: usize = u32::from_be_bytes(*n_images_binary) as usize;
-    dbg!(n_images);
+    // dbg!(n_images);
 
     let n_rows: usize = un_clean_data[11] as usize;
-    dbg!(n_rows);
+    // dbg!(n_rows);
 
     let n_cols: usize = un_clean_data[15] as usize;
-    dbg!(n_cols);
+    // dbg!(n_cols);
 
 
     let clean_data: Vec<u8> = un_clean_data[16..n].try_into().unwrap();
 
-    dbg!(clean_data.len() as f64 /  784.0);
+    // dbg!(clean_data.len() as f64 /  784.0);
 
 
     let mut clean_data_f64: Vec<f64> = vec![0.0; clean_data.len()];
@@ -731,6 +739,8 @@ fn main() {
         }
 
         print_picture(i, &test_images, &test_labels);
+
+        std::thread::sleep(Duration::from_secs(1));
 
         
 
