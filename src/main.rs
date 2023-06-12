@@ -62,7 +62,7 @@ impl FeedForwardNetwork {
         for epoch in 0..epochs {
 
 
-            print!(" {},", epoch + 1);
+            dbg!(epoch + 1);
             
 
             // initialize gradients 
@@ -573,7 +573,7 @@ fn main() {
 
     let mut network: FeedForwardNetwork = FeedForwardNetwork::new()
         .add_layer(ReLU(128))
-        .add_layer(ReLU(128))
+        //.add_layer(ReLU(128))
         .add_layer(SoftMax(10));
 
     for weight in network.weights.iter() {
@@ -586,7 +586,7 @@ fn main() {
     
     let test_image: Array2<f64> = scaled_test_images.slice(s![0, .., ..]).to_owned();
 
-    let predictions: &Array2<f64> = &network.feed_forward(test_image)[3];
+    let predictions: &Array2<f64> = &network.feed_forward(test_image)[2];
 
     println!("image of an {}", test_labels[[0]]);
 
