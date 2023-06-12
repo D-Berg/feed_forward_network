@@ -3,11 +3,13 @@ use std::{io::Read};
 use ndarray::*;
 // use std::io::Write;
 use Layer::*;
+use LossFunction::*;
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Normal;
 
 // used to print colorized std out 
 use colored::Colorize;
+use ndarray_rand::rand_distr::num_traits::{pow, Pow};
 
 // progressbar 
 use std::time::Duration;
@@ -50,7 +52,8 @@ impl FeedForwardNetwork {
         &mut self,
         epochs: usize,
         training_images: &Array3<f64>,
-        training_labels: &Array1<u8>,  
+        training_labels: &Array1<u8>,
+        loss_function: LossFunction  
     ) {
 
         println!("{}", "Start training...\n".red());
@@ -67,6 +70,8 @@ impl FeedForwardNetwork {
         let n_neurons_input_layer: usize = shape_images[1] * shape_images[2];
 
         self.initialize_weights_and_biases(n_neurons_input_layer);
+
+        let mut costs: Vec<f64> = Vec::new();
 
         'epoch_loop: for epoch in 0..epochs {
 
@@ -92,7 +97,7 @@ impl FeedForwardNetwork {
 
             }
 
-            let pb = indicatif::ProgressBar::new(n_images as u64);
+            let pb: indicatif::ProgressBar = indicatif::ProgressBar::new(n_images as u64);
 
             // TODO: parallelize this
             for i in 0..n_images {
@@ -136,7 +141,11 @@ impl FeedForwardNetwork {
 
                 // backpropegate image in network to get deltas
 
-                let deltas: Vec<Array2<f64>> = self.backpropegate(&activations, &label);
+                let deltas: Vec<Array2<f64>> = self.backpropegate(
+                    &activations, 
+                    &label, 
+                    &loss_function
+                );
 
                
                 // calculate gradient for dC_x/dW and dC_x/db (matrix form)
@@ -155,6 +164,32 @@ impl FeedForwardNetwork {
                     
 
                 }  
+
+                // creates vec [0, 0, 0 , 1, ..., 0]
+                let mut label_vec: Vec<f64> = vec![0.0; 10]; 
+
+                label_vec[label as usize] = 1.0;
+
+                let y: Array2<f64> = Array2::<f64>::from_shape_vec((label_vec.len(), 1), label_vec).expect("failed to create y");
+
+                let a_L = &activations[activations.len()-1];
+
+                // dbg!(label);
+
+                // dbg!(a_L);
+
+                let cost: f64 = match loss_function {
+                    LeastSquares => {
+
+                        (a_L - y).mapv(|a: f64| a.pow(2)).sum()
+                        
+                    },
+                    CrossEntropy => -a_L[[label as usize, 0]].ln(),
+                };
+
+                // dbg!(cost);
+
+                costs.push(cost);
 
                 
                 pb.inc(1);
@@ -175,16 +210,24 @@ impl FeedForwardNetwork {
 
             let accuracy = number_correct_predictions as f64 / n_images as f64;
             
+            let total_cost: f64 = costs.iter().sum();
+
+            let average_cost: f64 = total_cost / n_images as f64;
+
 
             pb.finish();
-            let epoch_time: Duration =  pb.elapsed();
+            let epoch_time: f64 =  pb.elapsed().as_secs_f64();
+
+            // let epoch_time: f64 = epoch_time.try_into().expect("Failed to convert");
 
             println!(
-                "{} {:?}, {} {}", 
+                "{} {:.2}s, {} {:.2}, {}: {:.2}", 
                 "Time:".blue(),
                 epoch_time,
                 "Accuracy:".blue(),
-                accuracy
+                accuracy,
+                "Loss".blue(),
+                average_cost
             );
 
             total_training_time += pb.elapsed();
@@ -192,7 +235,6 @@ impl FeedForwardNetwork {
             print!("\n");
         }
 
-        
 
         println!("\n{} {:?}", "Finished training in:".green(), total_training_time);
 
@@ -227,7 +269,6 @@ impl FeedForwardNetwork {
 
             let b_l: &Array2<f64> = &self.biases[l - 1];
 
-
             let z_l: Array2<f64> = w_l.dot(&activations[l - 1]) + b_l;
 
             let a_l: Array2<f64> = match layer {
@@ -248,7 +289,8 @@ impl FeedForwardNetwork {
     fn backpropegate(
         &mut self,
         activations: &Vec<Array2<f64>>,
-        label: &u8
+        label: &u8,
+        loss_function: &LossFunction
 
     ) -> Vec<Array2<f64>> {
 
@@ -290,7 +332,13 @@ impl FeedForwardNetwork {
         };
 
 
-        let delta_L: Array2<f64> = 2.0 * (a_L - y) * sigma_prime_L;
+        let delta_L: Array2<f64> = match loss_function {
+            LeastSquares => 2.0 * (a_L - y) * sigma_prime_L,
+            CrossEntropy => {
+               a_L - y
+            },
+             
+        };
 
         deltas[L] = delta_L;
 
@@ -537,6 +585,12 @@ fn softmax_prime(z_vec: &Array2<f64>) -> Array2<f64> {
 }
 
 
+enum LossFunction {
+    LeastSquares,
+    CrossEntropy
+}
+
+
 
 /// Function to be used by get data functions 
 /// to minimize code repetition.
@@ -720,12 +774,16 @@ fn main() {
 
 
     
-    network.train(10, &scaled_training_images, &training_labels);
+    network.train(
+        10, 
+        &scaled_training_images, 
+        &training_labels,
+        CrossEntropy
+    );
 
 
     let predicted_labels: Array1<u8> = network.test(&scaled_test_images);
     
-    let predicted_traing_labels: Array1<u8> = network.test(&scaled_training_images);
 
     for i in 0..5 {
 
@@ -747,9 +805,8 @@ fn main() {
     }
 
     let accuracy = network.get_accuracy(&test_labels, &predicted_labels);
-    let accuracy_on_training = network.get_accuracy(&training_labels, &predicted_traing_labels);
+    
     println!("Accuracy: {}", accuracy);
-    println!("Accuracy on training data: {}", accuracy_on_training); 
 
 
     
