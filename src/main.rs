@@ -1,9 +1,15 @@
-use std::{io::Read, sync::Arc, clone};
+use std::{io::Read};
 use ndarray::*;
 use std::io::Write;
 use Layer::*;
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Normal;
+
+
+// threading 
+use std::thread;
+use std::thread::JoinHandle;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// A Feed Forward Network to be used on mnist data
 /// Input a 28*28 = 784.
@@ -59,7 +65,7 @@ impl FeedForwardNetwork {
             print!(" {},", epoch + 1);
             
 
-            // initialize weight gradients 
+            // initialize gradients 
             let mut weight_gradients: Vec<Array2<f64>> = Vec::new();
             let mut bias_gradients: Vec<Array2<f64>> = Vec::new();
 
@@ -95,47 +101,32 @@ impl FeedForwardNetwork {
 
                 let deltas: Vec<Array2<f64>> = self.backpropegate(&activations, &label);
 
-                // dbg!(&deltas);
-
+               
+                // calculate gradient for dC_x/dW and dC_x/db (matrix form)
                 let L = self.layers.len();
                 
                 for l in (0..L).rev() {
 
                     let a_l_min_1: &Array2<f64> = &activations[l];
 
-
-
                     let weight_grad_x: Array2<f64> = deltas[l].dot(&a_l_min_1.t());
 
-                    if l == 1 {
-                        // dbg!(&weight_grad_x);
-
-                        // dbg!(&deltas[l]);
-
-                        // dbg!(a_l_min_1);
-                    }
 
                     weight_gradients[l] = &weight_gradients[l] + weight_grad_x;
 
                     bias_gradients[l] = deltas[l].to_owned();
                     
 
-                } // calculate gradient for dC_x/dW and dC_x/db (matrix form) 
+                }  
 
             }
 
             // Update weights W^l = W^l - grad(W^l)
             // remember grad(W^l) = mean(dC_x/dW^l)
 
-            let L = self.layers.len();
+            self.sgd(&weight_gradients, &bias_gradients, n_images, &eta);
 
-            for l in (0..L).rev() {
-
-                let w_l: &Array2<f64> = &self.weights[l];
-
-                self.weights[l] = w_l - eta / (n_images as f64) * &weight_gradients[l];
-
-            }
+            
             // Update weights b^l = b^l - grad(b^l)
             // grad(b^l) = mean(dC_x/db^l) = mean(delta^l_x)
         }
@@ -272,6 +263,28 @@ impl FeedForwardNetwork {
     }
 
 
+    fn sgd(
+        &mut self,
+        weight_gradients: &Vec<Array2<f64>>,
+        bias_gradients: &Vec<Array2<f64>>,
+        n_images: usize,
+        eta: &f64
+    ) {
+
+        let L = self.layers.len();
+
+        for l in (0..L).rev() {
+
+            let w_l: &Array2<f64> = &self.weights[l];
+            let b_l: &Array2<f64> = &self.biases[l];
+
+            self.weights[l] = w_l - eta / (n_images as f64) * &weight_gradients[l];
+            self.biases[l] = b_l - eta / (n_images as f64) * &bias_gradients[l];
+
+        }
+    }
+
+
     pub fn test(epochs: usize) {
 
         
@@ -305,10 +318,16 @@ impl FeedForwardNetwork {
 
             let w_l_shape:[usize; 2] = [n_current_layer, n_previous_layer];
 
-            let w_l: Array2<f64> = Array2::<f64>::random(w_l_shape, Normal::new(0.0, 0.1).unwrap());
+            let w_l: Array2<f64> = Array2::<f64>::random(
+                w_l_shape,
+                 Normal::new(0.0, 0.1).unwrap()
+            );
 
 
-            let b_l: Array2<f64> = Array2::<f64>::random((n_current_layer, 1), Normal::new(0.0, 0.1).unwrap());
+            let b_l: Array2<f64> = Array2::<f64>::random(
+                (n_current_layer, 1),
+                 Normal::new(0.0, 0.1).unwrap()
+            );
 
 
             self.weights.push(w_l);
@@ -379,7 +398,8 @@ fn softmax_prime(z_vec: &Array2<f64>) -> Array2<f64> {
 /// to minimize code repetition.
 fn read_in_data(file_name: &str) -> Vec<u8> {
 
-    let mut file = std::fs::File::open(file_name).expect("Error opening file");
+    let mut file = std::fs::File::open(file_name)
+        .expect("Error opening file");
 
     let mut buffer: Vec<u8> = Vec::new();
 
@@ -404,7 +424,8 @@ fn get_test_labels() -> Array1<u8> {
 
 }
 
-/// Extracts data useful data from read_in_data and returns training labels as a vector.
+/// Extracts data useful data from read_in_data 
+/// and returns training labels as a vector.
 fn get_labels(file_name: &str) -> Array1<u8> {
 
     // we get unclean data from reading the file
@@ -475,7 +496,10 @@ fn get_images(file_name: &str) ->Array3<f64> {
 
     // convert to array
 
-    let data_array: Array3<f64> = Array::from_shape_vec((n_images, n_rows, n_cols) ,clean_data_f64).expect("Error: wrong shape");
+    let data_array: Array3<f64> = Array::from_shape_vec(
+        (n_images, n_rows, n_cols),
+        clean_data_f64)
+        .expect("Error: wrong shape");
 
 
     return data_array;
