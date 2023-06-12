@@ -10,7 +10,7 @@ use ndarray_rand::rand_distr::Normal;
 use colored::Colorize;
 
 // progressbar 
-
+use std::time::Duration;
 
 
 // threading 
@@ -55,6 +55,8 @@ impl FeedForwardNetwork {
 
         println!("{}", "Start training...".red());
 
+        let mut total_training_time: Duration= Duration::new(0, 0);
+
         //learning rate 
         let eta: f64 = 1.0;
 
@@ -72,6 +74,8 @@ impl FeedForwardNetwork {
             println!("Training on epoch: {}/{}", epoch + 1, epochs);
             // std::io::stdout().flush().expect("Failed to flush stdout");
             
+
+            let mut number_correct_predictions: u32 = 0;
 
             // initialize gradients 
             let mut weight_gradients: Vec<Array2<f64>> = Vec::new();
@@ -104,6 +108,30 @@ impl FeedForwardNetwork {
                 // We will have a^0 which is just the image input reshaped
                 let activations: Vec<Array2<f64>> = self.feed_forward(image);
 
+                let predictions_probs: &Array2<f64> = &activations[activations.len()-1];
+
+                let predictions_len: usize = predictions_probs.shape()[0];
+
+                let mut max_prob: f64 = 0.0;
+
+                let mut predicted_label: u8 = 0;
+
+                for j in 0..predictions_len {
+
+                    let prediction_prob: f64 = predictions_probs[[j, 0]];
+
+                    if prediction_prob >=  max_prob {
+                        predicted_label = j as u8;
+                        max_prob = prediction_prob;
+
+                    }
+
+                }
+
+                if predicted_label == label {
+                    number_correct_predictions += 1;
+                }
+
                 // dbg!(&activations[0]);
 
                 // backpropegate image in network to get deltas
@@ -133,22 +161,32 @@ impl FeedForwardNetwork {
 
             }
 
-            pb.finish();
-            println!("Took {:?}", pb.elapsed());
+            
 
             // Update weights W^l = W^l - grad(W^l)
             // remember grad(W^l) = mean(dC_x/dW^l)
 
             self.sgd(&weight_gradients, &bias_gradients, n_images, &eta);
 
+
             
             // Update weights b^l = b^l - grad(b^l)
             // grad(b^l) = mean(dC_x/db^l) = mean(delta^l_x)
+
+            let accuracy = number_correct_predictions as f64 / n_images as f64;
+            
+
+            pb.finish();
+            let epoch_time: Duration =  pb.elapsed();
+            println!("Took {:?}, Accuracy: {}", epoch_time, accuracy);
+            total_training_time += pb.elapsed();
             
             print!("\n");
         }
 
-        println!("\n{}", "Finished training".green());
+        
+
+        println!("\n{} {:?}", "Finished training in:".green(), total_training_time);
 
     }
 
@@ -302,11 +340,65 @@ impl FeedForwardNetwork {
         }
     }
 
+    // returns predictions 
+    pub fn test(
+        &mut self,
+        test_images: &Array3<f64>,
+    ) -> Array1<u8> {
 
-    pub fn test(epochs: usize) {
+        println!("\n{}", "Starting test...".red());
+        
+        let shape_images: &[usize] = &test_images.shape();
+
+        let n_images: usize = shape_images[0];
+
+        let n_neurons_input_layer: usize = shape_images[1] * shape_images[2];
 
         
-        todo!()
+        let pb = indicatif::ProgressBar::new(n_images as u64);
+
+        let mut predicted_labels: Array1<u8> = Array1::<u8>::zeros(n_images);
+        
+        for i in 0..n_images {
+
+            let image: Array2<f64> = test_images.slice(s![i, .., ..]).to_owned();
+
+            
+    
+            let activations: Vec<Array2<f64>> = self.feed_forward(image);
+
+            // get predictions (last activation layer)
+            let predictions_probs: &Array2<f64> = &activations[activations.len() - 1];
+
+            
+            let predictions_len: usize = predictions_probs.shape()[0];
+
+            let mut max_prob: f64 = 0.0;
+
+            let mut predicted_label: u8 = 0;
+
+            for j in 0..predictions_len {
+
+                let prediction_prob: f64 = predictions_probs[[j, 0]];
+
+                if prediction_prob >=  max_prob {
+                    predicted_label = j as u8;
+                    max_prob = prediction_prob;
+
+                }
+
+            }
+
+            predicted_labels[[i]] = predicted_label;
+
+
+            pb.inc(1);
+        }
+
+        pb.finish();
+        println!("{}", "Finished testing".green());
+
+        return predicted_labels;
 
 
     }
@@ -362,6 +454,32 @@ impl FeedForwardNetwork {
         return self;
 
     }
+
+    fn get_accuracy(
+        &self,
+        test_labels: &Array1<u8>,
+        predicted_labels: &Array1<u8>
+    ) -> f64 {
+
+        let n_labels = test_labels.shape()[0];
+
+        let mut n_correct: u32 = 0;
+
+        for i in 0..n_labels {
+
+            if predicted_labels[[i]] == test_labels[[i]] {
+                n_correct += 1;
+            }
+
+        }
+
+        let accuracy = n_correct as f64 / n_labels as f64;
+
+
+        return accuracy;
+
+    }
+
 
 
 }
@@ -580,31 +698,60 @@ fn main() {
     let scaled_training_images: Array3<f64> = &training_images / 255.0;
     let scaled_test_images: Array3<f64> = &test_images / 255.0;
     
-    for i in 0..1 {
-        print_picture(i, &training_images, &training_labels);
-    }
+    // for i in 0..1 {
+    //     print_picture(i, &training_images, &training_labels);
+    // }
 
-    for i in 0..1 {
-        print_picture(i, &test_images, &test_labels);
-    }
+    // for i in 0..1 {
+    //     print_picture(i, &test_images, &test_labels);
+    // }
 
     let mut network: FeedForwardNetwork = FeedForwardNetwork::new()
         .add_layer(ReLU(128))
-        //.add_layer(ReLU(128))
         .add_layer(SoftMax(10));
 
 
     
-    network.train(5, &scaled_training_images, &training_labels);
+    network.train(10, &scaled_training_images, &training_labels);
+
+
+    let predicted_labels: Array1<u8> = network.test(&scaled_test_images);
+    
+    let predicted_traing_labels: Array1<u8> = network.test(&scaled_training_images);
+
+    for i in 0..5 {
+
+        let predicted_label: u8 = predicted_labels[[i]];
+        let correct_label: u8 = test_labels[[i]];
+
+        if predicted_label == correct_label { // correct
+            println!("{}, Predicted a {}", "Correct prediction".green(), predicted_label);
+        } else {
+            println!("{}, predicted a {}", "Wrong prediction".red(), predicted_label);
+        }
+
+        print_picture(i, &test_images, &test_labels);
+
+        
+
+    }
+
+    let accuracy = network.get_accuracy(&test_labels, &predicted_labels);
+    let accuracy_on_training = network.get_accuracy(&training_labels, &predicted_traing_labels);
+    println!("Accuracy: {}", accuracy);
+    println!("Accuracy on training data: {}", accuracy_on_training); 
+
 
     
-    let test_image: Array2<f64> = scaled_test_images.slice(s![0, .., ..]).to_owned();
+    // let test_image: Array2<f64> = scaled_test_images.slice(s![0, .., ..]).to_owned();
 
-    let predictions: &Array2<f64> = &network.feed_forward(test_image)[2];
 
-    println!("image of an {}", test_labels[[0]]);
 
-    println!("{:?}",predictions);
+    // let prediction: &Array2<f64> = &network.feed_forward(test_image)[2];
+
+    // println!("image of an {}", test_labels[[0]]);
+
+    // println!("{:?}",prediction);
 
    
     
