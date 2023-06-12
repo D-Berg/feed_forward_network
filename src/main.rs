@@ -71,7 +71,7 @@ impl FeedForwardNetwork {
 
         self.initialize_weights_and_biases(n_neurons_input_layer);
 
-        let mut costs: Vec<f64> = Vec::new();
+        let mut costs: Vec<f64> = Vec::with_capacity(n_images);
 
         'epoch_loop: for epoch in 0..epochs {
 
@@ -83,8 +83,8 @@ impl FeedForwardNetwork {
             let mut number_correct_predictions: u32 = 0;
 
             // initialize gradients 
-            let mut weight_gradients: Vec<Array2<f64>> = Vec::new();
-            let mut bias_gradients: Vec<Array2<f64>> = Vec::new();
+            let mut weight_gradients: Vec<Array2<f64>> = Vec::with_capacity(n_images);
+            let mut bias_gradients: Vec<Array2<f64>> = Vec::with_capacity(n_images);
 
             for l in 0..self.weights.len() {
 
@@ -250,7 +250,7 @@ impl FeedForwardNetwork {
         // index of last layer
         let L: usize = self.layers.len();
 
-        let mut activations: Vec<Array2<f64>> = Vec::new();
+        let mut activations: Vec<Array2<f64>> = Vec::with_capacity(L);
 
         // assume first layer is always flatten for now 
 
