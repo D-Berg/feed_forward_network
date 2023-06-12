@@ -2,6 +2,8 @@ use std::{io::Read, sync::Arc, clone};
 use ndarray::*;
 use std::io::Write;
 use Layer::*;
+use ndarray_rand::RandomExt;
+use ndarray_rand::rand_distr::Normal;
 
 /// A Feed Forward Network to be used on mnist data
 /// Input a 28*28 = 784.
@@ -12,7 +14,7 @@ use Layer::*;
 struct FeedForwardNetwork {
     layers: Vec<Layer>,
     weights: Vec<Array2<f64>>,
-    biases: Vec<Array1<f64>>,
+    biases: Vec<Array2<f64>>,
 
 }
 
@@ -39,31 +41,36 @@ impl FeedForwardNetwork {
     ) {
 
         //learning rate 
-        let eta: f64 = 0.01;
+        let eta: f64 = 1.0;
 
         print!("{}", "Training on epoch:");
+
+        let shape_images: &[usize] = &training_images.shape();
+
+        let n_images: usize = shape_images[0];
+
+        let n_neurons_input_layer: usize = shape_images[1] * shape_images[2];
+
+        self.initialize_weights_and_biases(n_neurons_input_layer);
 
         for epoch in 0..epochs {
 
 
             print!(" {},", epoch + 1);
-
-            let shape_images: &[usize] = &training_images.shape();
-
-            let n_images: usize = shape_images[0];
-
-            let n_neurons_input_layer: usize = shape_images[1] * shape_images[2];
-
-            self.initialize_weights_and_biases(n_neurons_input_layer);
+            
 
             // initialize weight gradients 
             let mut weight_gradients: Vec<Array2<f64>> = Vec::new();
+            let mut bias_gradients: Vec<Array2<f64>> = Vec::new();
 
-            for weight in &self.weights {
+            for l in 0..self.weights.len() {
 
-                let weight_shape: &[usize] = weight.shape();
+                let weight_shape: &[usize] = &self.weights[l].shape();
+                let bias_shape = &self.biases[l].shape();
 
                 weight_gradients.push(Array2::<f64>::zeros([weight_shape[0], weight_shape[1]]));
+
+                bias_gradients.push(Array2::<f64>::zeros([bias_shape[0], bias_shape[1]]));
 
             }
 
@@ -80,23 +87,38 @@ impl FeedForwardNetwork {
                 // Vector of (a^0, ... a^L)
                 // where a^l is a (n_l x 1) vector
                 // We will have a^0 which is just the image input reshaped
-                let activations: Vec<Array1<f64>> = self.feed_forward(image);
+                let activations: Vec<Array2<f64>> = self.feed_forward(image);
+
+                // dbg!(&activations[0]);
 
                 // backpropegate image in network to get deltas
 
-                let deltas: Vec<Array1<f64>> = self.backpropegate(&activations, &label);
+                let deltas: Vec<Array2<f64>> = self.backpropegate(&activations, &label);
+
+                // dbg!(&deltas);
 
                 let L = self.layers.len();
                 
                 for l in (0..L).rev() {
 
-                    let a_l_min_1: &Array1<f64> = &activations[l];
+                    let a_l_min_1: &Array2<f64> = &activations[l];
 
-                    let weight_grad_x = a_l_min_1.dot(&deltas[l]);
+
+
+                    let weight_grad_x: Array2<f64> = deltas[l].dot(&a_l_min_1.t());
+
+                    if l == 1 {
+                        // dbg!(&weight_grad_x);
+
+                        // dbg!(&deltas[l]);
+
+                        // dbg!(a_l_min_1);
+                    }
 
                     weight_gradients[l] = &weight_gradients[l] + weight_grad_x;
 
-
+                    bias_gradients[l] = deltas[l].to_owned();
+                    
 
                 } // calculate gradient for dC_x/dW and dC_x/db (matrix form) 
 
@@ -114,11 +136,11 @@ impl FeedForwardNetwork {
                 self.weights[l] = w_l - eta / (n_images as f64) * &weight_gradients[l];
 
             }
-
-
             // Update weights b^l = b^l - grad(b^l)
             // grad(b^l) = mean(dC_x/db^l) = mean(delta^l_x)
         }
+
+
     }
 
     /// should just take one image  
@@ -126,16 +148,16 @@ impl FeedForwardNetwork {
     fn feed_forward(
         &mut self,
         image: Array2<f64>
-    ) -> Vec<Array1<f64>> {
+    ) -> Vec<Array2<f64>> {
 
         // index of last layer
         let L: usize = self.layers.len();
 
-        let mut activations: Vec<Array1<f64>> = Vec::new();
+        let mut activations: Vec<Array2<f64>> = Vec::new();
 
         // assume first layer is always flatten for now 
 
-        let a_0: Array1<f64> = image.into_shape((784)).unwrap();
+        let a_0: Array2<f64> = image.into_shape((784, 1)).unwrap();
 
         activations.push(a_0);
 
@@ -148,12 +170,12 @@ impl FeedForwardNetwork {
 
             let w_l: &Array2<f64> = &self.weights[l - 1];
 
-            let b_l: &Array1<f64> = &self.biases[l - 1];
+            let b_l: &Array2<f64> = &self.biases[l - 1];
 
 
-            let z_l: Array1<f64> = w_l.dot(&activations[l - 1]) + b_l;
+            let z_l: Array2<f64> = w_l.dot(&activations[l - 1]) + b_l;
 
-            let a_l: Array1<f64> = match layer {
+            let a_l: Array2<f64> = match layer {
                 ReLU(_) => z_l.mapv(relu),
                 SoftMax(_) => softmax(&z_l),
             };
@@ -170,19 +192,19 @@ impl FeedForwardNetwork {
     /// d^l = a^l * (1 - a^l) * (W^{l + 1} * d^{l + 1}
     fn backpropegate(
         &mut self,
-        activations: &Vec<Array1<f64>>,
+        activations: &Vec<Array2<f64>>,
         label: &u8
 
-    ) -> Vec<Array1<f64>> {
+    ) -> Vec<Array2<f64>> {
 
-        let L = self.layers.len() - 1;
+        let L: usize = self.layers.len() - 1;
 
 
-        let mut deltas: Vec<Array1<f64>> = vec![Array1::<f64>::zeros(0); L + 1];
+        let mut deltas: Vec<Array2<f64>> = vec![Array2::<f64>::zeros((0, 0)); L + 1];
 
 
         let weights: &Vec<Array2<f64>> = &self.weights;
-        let biases: &Vec<Array1<f64>> = &self.biases;
+        let biases: &Vec<Array2<f64>> = &self.biases;
 
         let label_f64: f64 = label.clone() as f64;
 
@@ -193,25 +215,27 @@ impl FeedForwardNetwork {
 
         // creates vec [0, 0, 0 , 1, ..., 0]
         let mut label_vec: Vec<f64> = vec![0.0; n_last_layer]; 
+
         label_vec[*label as usize] = 1.0;
-        let y: Array1<f64> = Array1::<f64>::from_vec(label_vec);
+
+        let y: Array2<f64> = Array2::<f64>::from_shape_vec((label_vec.len(), 1), label_vec).expect("failed to create y");
 
         //for Layer L
 
-        let a_L: &Array1<f64> = &activations[L + 1];
+        let a_L: &Array2<f64> = &activations[L + 1];
         let w_L: &Array2<f64> = &weights[L];
-        let b_L: &Array1<f64> = &biases[L];
+        let b_L: &Array2<f64> = &biases[L];
 
-        let z_L: Array1<f64> = w_L.dot(&activations[L]) + b_L;
+        let z_L: Array2<f64> = w_L.dot(&activations[L]) + b_L;
 
 
-        let sigma_prime_L: Array1<f64> = match self.layers[L] {
+        let sigma_prime_L: Array2<f64> = match self.layers[L] {
             ReLU(_) => z_L.mapv(relu_prime),
             SoftMax(_) => softmax_prime(&z_L),            
         };
 
 
-        let delta_L: Array1<f64> = 2.0 * (a_L - y) * sigma_prime_L;
+        let delta_L: Array2<f64> = 2.0 * (a_L - y) * sigma_prime_L;
 
         deltas[L] = delta_L;
 
@@ -221,23 +245,23 @@ impl FeedForwardNetwork {
            
 
             let w_l: &Array2<f64>  = &weights[l];
-            let b_l: &Array1<f64> = &biases[l];
+            let b_l: &Array2<f64> = &biases[l];
 
             let w_l_plus_1: &Array2<f64> = &weights[l + 1];
 
-            let a_l_munus_1: &Array1<f64> = &activations[l];
+            let a_l_munus_1: &Array2<f64> = &activations[l];
 
             //index of activations i + 1
-            let z_l: Array1<f64> = w_l.dot(a_l_munus_1) + b_l;
+            let z_l: Array2<f64> = w_l.dot(a_l_munus_1) + b_l;
 
 
-            let sigma_prime_l: Array1<f64> = match self.layers[l] {
+            let sigma_prime_l: Array2<f64> = match self.layers[l] {
                 ReLU(_) => z_l.mapv(relu_prime),
                 SoftMax(_) => softmax_prime(&z_l),
             };
 
 
-            let delta_l: Array1<f64> = w_l_plus_1.t().dot(&deltas[l + 1]) * sigma_prime_l;
+            let delta_l: Array2<f64> = w_l_plus_1.t().dot(&deltas[l + 1]) * sigma_prime_l;
             
 
             deltas[l] = delta_l;
@@ -281,8 +305,10 @@ impl FeedForwardNetwork {
 
             let w_l_shape:[usize; 2] = [n_current_layer, n_previous_layer];
 
-            let w_l: Array2<f64> = Array2::<f64>::zeros(w_l_shape);
-            let b_l: Array1<f64> = Array1::<f64>::zeros(n_current_layer);
+            let w_l: Array2<f64> = Array2::<f64>::random(w_l_shape, Normal::new(0.0, 0.1).unwrap());
+
+
+            let b_l: Array2<f64> = Array2::<f64>::random((n_current_layer, 1), Normal::new(0.0, 0.1).unwrap());
 
 
             self.weights.push(w_l);
@@ -293,6 +319,8 @@ impl FeedForwardNetwork {
 
 
         }
+
+        // dbg!(&self.weights[1]);
 
         return self;
 
@@ -332,14 +360,14 @@ fn relu_prime(z: f64) -> f64 {
 
 
 // take z_vec and return sig(z_vec)_i = e^(z_i) / sum(e^(z_vec))
-fn softmax(z_vec: &Array1<f64>) -> Array1<f64> { 
+fn softmax(z_vec: &Array2<f64>) -> Array2<f64> { 
 
     z_vec.mapv(f64::exp) / z_vec.mapv(f64::exp).sum()
     
 }
 
 
-fn softmax_prime(z_vec: &Array1<f64>) -> Array1<f64> {
+fn softmax_prime(z_vec: &Array2<f64>) -> Array2<f64> {
 
     softmax(z_vec) * (1.0 - softmax(z_vec))
 
@@ -362,13 +390,25 @@ fn read_in_data(file_name: &str) -> Vec<u8> {
 
 
 
+fn get_training_labels() -> Array1<u8> {
+    let file_name: &str = "mnist_data/train_set_labels";
+
+    return get_labels(file_name);
+
+}
+
+fn get_test_labels() -> Array1<u8> {
+    let file_name: &str = "mnist_data/test_set_labels";
+
+    return get_labels(file_name);
+
+}
+
 /// Extracts data useful data from read_in_data and returns training labels as a vector.
-fn get_training_labels() -> ArrayBase<OwnedRepr<u8>, Dim<[usize; 1]>> {
+fn get_labels(file_name: &str) -> Array1<u8> {
 
     // we get unclean data from reading the file
     // we need to extract the useful information 
-
-    let file_name: &str = "mnist_data/train_set_labels";
 
     let un_clean_data: Vec<u8> = read_in_data(file_name);
 
@@ -377,15 +417,30 @@ fn get_training_labels() -> ArrayBase<OwnedRepr<u8>, Dim<[usize; 1]>> {
 
     let clean_data: Vec<u8>  = un_clean_data[8..n].try_into().unwrap();
 
-    let data_array: ArrayBase<OwnedRepr<u8>, Dim<[usize; 1]>> = Array::from(clean_data);
+    let data_array: Array1<u8> = Array::from(clean_data);
 
     return data_array;
 
 }
 
-fn get_training_images() -> ArrayBase<OwnedRepr<f64>, Dim<[usize; 3]>> {
-    
+
+fn get_training_images() -> Array3<f64> {
+
     let file_name: &str = "mnist_data/train_set_images";
+
+    return get_images(file_name); 
+
+}
+
+fn get_test_images() -> Array3<f64> {
+    let file_name: &str = "mnist_data/test_set_images";
+
+    return get_images(file_name); 
+}
+
+
+
+fn get_images(file_name: &str) ->Array3<f64> {
 
     let un_clean_data: Vec<u8> = read_in_data(file_name);
 
@@ -476,17 +531,25 @@ fn print_picture(
 fn main() {
 
     let training_labels: Array1<u8> = get_training_labels();
-
-
     let training_images: Array3<f64> = get_training_images();
 
+    let test_images: Array3<f64> = get_test_images();
+    let test_labels: Array1<u8> = get_test_labels();
+
+    let scaled_training_images: Array3<f64> = &training_images / 255.0;
+    let scaled_test_images: Array3<f64> = &test_images / 255.0;
     
-    for i in 0..5 {
+    for i in 0..1 {
         print_picture(i, &training_images, &training_labels);
     }
 
+    for i in 0..1 {
+        print_picture(i, &test_images, &test_labels);
+    }
+
     let mut network: FeedForwardNetwork = FeedForwardNetwork::new()
-        .add_layer(ReLU(4))
+        .add_layer(ReLU(128))
+        .add_layer(ReLU(128))
         .add_layer(SoftMax(10));
 
     for weight in network.weights.iter() {
@@ -494,19 +557,18 @@ fn main() {
     }
 
 
-    network.train(10, &training_images, &training_labels);
-        
-    print!("{:?}", network.weights[1]);
-    // let test: Vec<f64> = vec![0.0; 4];
+    network.train(10, &scaled_training_images, &training_labels);
 
-    // //create dynamic array
-    // let mut weigths: ArrayD<f64> = ArrayD::<f64>::zeros(IxDyn(&[0]));
+    
+    let test_image: Array2<f64> = scaled_test_images.slice(s![0, .., ..]).to_owned();
 
-    // println!("{:?}", weigths);
+    let predictions: &Array2<f64> = &network.feed_forward(test_image)[3];
 
-    // weigths = ArrayD::<f64>::zeros(IxDyn(&[]));
+    println!("image of an {}", test_labels[[0]]);
 
-    // println!("{:?}", weigths);
+    println!("{:?}",predictions);
+
+   
     
 
 } 
@@ -519,6 +581,7 @@ mod tests {
 
     use crate::{relu, FeedForwardNetwork};
     use crate::Layer::*;
+    use crate::*;
 
 
     #[test]
@@ -553,7 +616,7 @@ mod tests {
         test_network.initialize_weights_and_biases(n_0);
 
         let weights:Vec<Array2<f64>> = test_network.weights;
-        let biases: Vec<Array1<f64>> = test_network.biases;
+        let biases: Vec<Array2<f64>> = test_network.biases;
 
 
         let w_1_shape: &[usize] = weights[0].shape();
@@ -563,10 +626,42 @@ mod tests {
 
         assert_eq!(w_1_shape, &[n_1, n_0]);
         assert_eq!(w_2_shape, &[n_2, n_1]);
-        assert_eq!(b_1_shape, &[n_1]);
-        assert_eq!(b_2_shape, &[n_2]);
+        assert_eq!(b_1_shape, &[n_1, 1]);
+        assert_eq!(b_2_shape, &[n_2, 1]);
 
         
     }
+
+    #[test]
+    fn test_softmax() {
+
+        let e_1 = 0.2;
+        let e_2 = 0.4;
+
+
+        let vec: Array2<f64> = Array2::from_shape_vec((2, 1), vec![e_1, e_2]).expect("failed to create test array");
+
+
+        let soft_m_func_result = softmax(&vec);
+
+
+        let answer_1 = soft_m_func_result[[0, 0]];
+        let answer_2 = soft_m_func_result[[1, 0]];
+
+        let correct_1 = e_1.exp() / (e_1.exp() + e_2.exp());
+
+        let correct_2 = e_2.exp() / (e_1.exp() + e_2.exp());
+
+        
+
+        // assert_eq!(correct_1 + correct_2, 1.0);
+        assert_eq!(answer_1 + answer_2, 1.0);
+        assert_eq!(answer_1, correct_1);
+        assert_eq!(answer_2, correct_2);
+
+        
+
+    }
+
 
 }
