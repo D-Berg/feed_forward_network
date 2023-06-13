@@ -60,7 +60,14 @@ impl FeedForwardNetwork {
         loss_function: LossFunction  
     ) {
 
+        let loss_function_string: &str = match loss_function {
+            CrossEntropy => "Cross Entropy",
+            LeastSquares => "Least Squares",
+        };
+
         println!("{}", "Start training...\n".red());
+
+        println!("Using Loss Function: {} \n", loss_function_string.blue());
 
         let mut total_training_time: Duration= Duration::new(0, 0);
 
@@ -75,7 +82,7 @@ impl FeedForwardNetwork {
 
         self.initialize_weights_and_biases(n_neurons_input_layer);
 
-        let mut costs: Vec<f64> = Vec::with_capacity(n_images);
+        
 
         'epoch_loop: for epoch in 0..epochs {
 
@@ -83,6 +90,7 @@ impl FeedForwardNetwork {
             println!("{} {}/{}", "Epoch:".blue(), epoch + 1, epochs);
             // std::io::stdout().flush().expect("Failed to flush stdout");
             
+            let mut costs: Vec<f64> = Vec::with_capacity(n_images);
 
             let mut number_correct_predictions: u32 = 0;
 
@@ -178,20 +186,31 @@ impl FeedForwardNetwork {
 
                 let a_L = &activations[activations.len()-1];
 
-                // dbg!(label);
-
-                // dbg!(a_L);
-
                 let cost: f64 = match loss_function {
                     LeastSquares => {
 
                         (a_L - y).mapv(|a: f64| a.pow(2)).sum()
                         
                     },
-                    CrossEntropy => -a_L[[label as usize, 0]].ln(),
+                    CrossEntropy =>{
+
+
+
+                         -a_L[[label as usize, 0]].ln()
+                    },
                 };
 
-                // dbg!(cost);
+
+                // if i < 5 {
+                //     dbg!(label);
+
+                //     dbg!(a_L);
+
+                //     dbg!(a_L[[label as usize, 0]]);
+
+                //     dbg!(cost);
+                // }
+                
 
                 costs.push(cost);
 
@@ -216,7 +235,7 @@ impl FeedForwardNetwork {
             
             let total_cost: f64 = costs.iter().sum();
 
-            let average_cost: f64 = total_cost / n_images as f64;
+            let loss: f64 = total_cost / n_images as f64;
 
 
             pb.finish();
@@ -231,7 +250,7 @@ impl FeedForwardNetwork {
                 "Accuracy:".blue(),
                 accuracy,
                 "Loss".blue(),
-                average_cost
+                loss
             );
 
             total_training_time += pb.elapsed();
