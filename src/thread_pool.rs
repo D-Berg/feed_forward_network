@@ -68,17 +68,17 @@ impl Worker {
         receiver: Arc<Mutex<mpsc::Receiver<Job>>>
     ) -> Worker {
 
-        let thread: JoinHandle<()> = thread::spawn(move || loop {
+        let thread: JoinHandle<()> = thread::spawn( move || loop {
             let message = receiver.lock().unwrap().recv();
 
             match message {
                 Ok(job) => {
-                    println!("Worker {id} got a job; executing.");
+                    // println!("Worker {id} got a job; executing.");
 
                     job();
                 }
                 Err(_) => {
-                    println!("Worker {id} disconnected; shutting down.");
+                    // println!("Worker {id} disconnected; shutting down.");
                     break;
                 }
             }

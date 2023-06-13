@@ -1,4 +1,4 @@
-use std::io::Write;
+// use std::io::Write;
 use std::{io::Read};
 use ndarray::*;
 // use std::io::Write;
@@ -98,26 +98,19 @@ impl FeedForwardNetwork {
             let mut costs: Vec<f64> = Vec::with_capacity(n_images);
 
             // TODO: Make accessable by all threads
-            let mut number_correct_predictions: u32 = 0;
+            let mut n_correct_arc: Arc<Mutex<Vec<u32>>>  = Arc::new(Mutex::new(Vec::with_capacity(n_images)));
 
             // initialize gradients 
             // TODO: Make accessable by all threads
-            let mut weight_gradients: Vec<Array2<f64>> = Vec::with_capacity(n_images);
-            let mut bias_gradients: Vec<Array2<f64>> = Vec::with_capacity(n_images);
 
-            for l in 0..self.weights.len() {
+            let (weight_gradients_arc, bias_gradients_arc) = self.create_gradients(n_images);
 
-                let weight_shape: &[usize] = &self.weights[l].shape();
-                let bias_shape = &self.biases[l].shape();
-
-                weight_gradients.push(Array2::<f64>::zeros([weight_shape[0], weight_shape[1]]));
-
-                bias_gradients.push(Array2::<f64>::zeros([bias_shape[0], bias_shape[1]]));
-
-            }
 
             // TODO: make accesseble by all threads;
-            let pb: indicatif::ProgressBar = indicatif::ProgressBar::new(n_images as u64);
+            let pb_arc= Arc::new(Mutex::new(indicatif::ProgressBar::new(n_images as u64)));
+
+
+            let pool = ThreadPool::new(8);
 
             // TODO: parallelize this
             for i in 0..n_images {
@@ -125,126 +118,147 @@ impl FeedForwardNetwork {
                 let image: Array2<f64> = training_images.slice(s![i, .., ..]).to_owned();
                 
 
-                let label = training_labels[[i]];
+                let label: u8 = training_labels[[i]];
 
-                // calculate activations for image 
-                // Vector of (a^0, ... a^L)
-                // where a^l is a (n_l x 1) vector
-                // We will have a^0 which is just the image input reshaped
-                let activations: Vec<Array2<f64>> = self.feed_forward(image);
 
-                let predictions_probs: &Array2<f64> = &activations[activations.len()-1];
+                // Think clones only live as long as its thread do
+                let mut self_clone: FeedForwardNetwork = self.clone();
+                let loss_function_clone: LossFunction = loss_function.clone();
 
-                let predictions_len: usize = predictions_probs.shape()[0];
+                let weight_gradients_arc = Arc::clone(&weight_gradients_arc);
 
-                let mut max_prob: f64 = 0.0;
+                let bias_gradients_arc = Arc::clone(&bias_gradients_arc);
 
-                let mut predicted_label: u8 = 0;
+                let n_correct_arc = Arc::clone(&n_correct_arc);
 
-                for j in 0..predictions_len {
+                let pb_arc = Arc::clone(&pb_arc);
 
-                    let prediction_prob: f64 = predictions_probs[[j, 0]];
+                pool.execute( move || {
+                    // calculate activations for image 
+                    let activations: Vec<Array2<f64>> = self_clone.feed_forward(image);
 
-                    if prediction_prob >=  max_prob {
-                        predicted_label = j as u8;
-                        max_prob = prediction_prob;
+                    // TODO: Move this to its own function
+                    let predictions_probs: &Array2<f64> = &activations[activations.len()-1];
+
+                    let predictions_len: usize = predictions_probs.shape()[0];
+
+                    let mut max_prob: f64 = 0.0;
+
+                    let mut predicted_label: u8 = 0;
+
+                    for j in 0..predictions_len {
+
+                        let prediction_prob: f64 = predictions_probs[[j, 0]];
+
+                        if prediction_prob >=  max_prob {
+                            predicted_label = j as u8;
+                            max_prob = prediction_prob;
+
+                        }
 
                     }
 
-                }
-
-                if predicted_label == label {
-                    number_correct_predictions += 1;
-                }
-
-                // dbg!(&activations[0]);
-
-                // backpropegate image in network to get deltas
-
-                let deltas: Vec<Array2<f64>> = self.backpropegate(
-                    &activations, 
-                    &label, 
-                    &loss_function
-                );
-
-               
-                // calculate gradient for dC_x/dW and dC_x/db (matrix form)
-                let L = self.layers.len();
-                
-                for l in (0..L).rev() {
-
-                    let a_l_min_1: &Array2<f64> = &activations[l];
-
-                    let weight_grad_x: Array2<f64> = deltas[l].dot(&a_l_min_1.t());
+                    let mut n_correct = n_correct_arc.lock().expect("Failed to lock n_correct");
 
 
-                    weight_gradients[l] = &weight_gradients[l] + weight_grad_x;
 
-                    bias_gradients[l] = deltas[l].to_owned();
-                    
+                    if predicted_label == label {
+                        n_correct.push(1);
+                    }
 
-                }  
+                    // backpropegate image in network to get deltas
+                    let deltas: Vec<Array2<f64>> = self_clone.backpropegate(
+                        &activations, 
+                        &label, 
+                        &loss_function_clone
+                    );
 
-                // creates vec [0, 0, 0 , 1, ..., 0]
-                let mut label_vec: Vec<f64> = vec![0.0; 10]; 
 
-                label_vec[label as usize] = 1.0;
+                    // calculate gradient for dC_x/dW and dC_x/db (matrix form)
+                    let L = self_clone.layers.len();
 
-                let y: Array2<f64> = Array2::<f64>::from_shape_vec((label_vec.len(), 1), label_vec).expect("failed to create y");
 
-                let a_L = &activations[activations.len()-1];
+                    for l in (0..L).rev() {
 
-                let cost: f64 = match loss_function {
-                    LeastSquares => {
-
-                        (a_L - y).mapv(|a: f64| a.pow(2)).sum()
+                        let a_l_min_1: &Array2<f64> = &activations[l];
+    
+                        let weight_grad_x: Array2<f64> = deltas[l].dot(&a_l_min_1.t());
                         
-                    },
-                    CrossEntropy =>{
+                        let mut w_grads = weight_gradients_arc.lock().unwrap();
+                        let mut b_grads = bias_gradients_arc.lock().unwrap();
+    
+                        w_grads[l] = &w_grads[l] + weight_grad_x;
+    
+                        b_grads[l] = deltas[l].to_owned();
+                        
+    
+                    }
+
+                    // creates vec [0, 0, 0 , 1, ..., 0]
+                    let mut label_vec: Vec<f64> = vec![0.0; 10]; 
+
+                    label_vec[label as usize] = 1.0;
+
+                    let y: Array2<f64> = Array2::<f64>::from_shape_vec((label_vec.len(), 1), label_vec).expect("failed to create y");
+                    
+                    let a_L = &activations[activations.len()-1];
 
 
+                    let cost: f64 = match loss_function_clone {
+                        LeastSquares => {
+    
+                            (a_L - y).mapv(|a: f64| a.pow(2)).sum()
+                            
+                        },
+                        CrossEntropy =>{
+    
+    
+    
+                             -a_L[[label as usize, 0]].ln()
+                        },
+                    };
 
-                         -a_L[[label as usize, 0]].ln()
-                    },
-                };
+                    let pb = pb_arc.lock().unwrap();
 
+                    pb.inc(1);
 
-                // if i < 5 {
-                //     dbg!(label);
+                });
 
-                //     dbg!(a_L);
-
-                //     dbg!(a_L[[label as usize, 0]]);
-
-                //     dbg!(cost);
-                // }
+                //END OF THREADPOOL
                 
-
-                costs.push(cost);
-
-                
-                pb.inc(1);
 
             }
 
+            
             
 
             // Update weights W^l = W^l - grad(W^l)
             // remember grad(W^l) = mean(dC_x/dW^l)
 
-            self.sgd(&weight_gradients, &bias_gradients, n_images, &eta);
+            let weight_gradients = weight_gradients_arc.lock().unwrap();
+
+            let bias_gradients = bias_gradients_arc.lock().unwrap();
+
+            self.sgd(&weight_gradients, &*bias_gradients, n_images, &eta);
 
 
             
             // Update weights b^l = b^l - grad(b^l)
             // grad(b^l) = mean(dC_x/db^l) = mean(delta^l_x)
 
-            let accuracy = number_correct_predictions as f64 / n_images as f64;
+            let n_correct = n_correct_arc.lock().unwrap();
+
+            let n_correct = &*n_correct;
+
+            let n_correct: u32 = n_correct.iter().sum();
+
+            let accuracy = (n_correct) as f64 / n_images as f64;
             
             let total_cost: f64 = costs.iter().sum();
 
             let loss: f64 = total_cost / n_images as f64;
 
+            let pb = pb_arc.lock().unwrap();
 
             pb.finish();
             let epoch_time: f64 =  pb.elapsed().as_secs_f64();
@@ -566,7 +580,30 @@ impl FeedForwardNetwork {
 
     }
 
+    fn create_gradients(&self, n_images: usize) -> (Arc<Mutex<Vec<Array2<f64>>>>, Arc<Mutex<Vec<Array2<f64>>>>) {
 
+        let mut weight_gradients: Vec<Array2<f64>> = Vec::with_capacity(n_images);
+            
+        let mut bias_gradients: Vec<Array2<f64>> = Vec::with_capacity(n_images);
+
+        for l in 0..self.weights.len() {
+
+            let weight_shape: &[usize] = &self.weights[l].shape();
+            let bias_shape = &self.biases[l].shape();
+
+            weight_gradients.push(Array2::<f64>::zeros([weight_shape[0], weight_shape[1]]));
+
+            bias_gradients.push(Array2::<f64>::zeros([bias_shape[0], bias_shape[1]]));
+
+        }
+
+        let weight_gradients = Arc::new(Mutex::new(weight_gradients));
+
+        let bias_gradients = Arc::new(Mutex::new(bias_gradients));
+
+        return (weight_gradients, bias_gradients);
+
+    }
 
 }
 
@@ -614,7 +651,7 @@ fn softmax_prime(z_vec: &Array2<f64>) -> Array2<f64> {
 
 }
 
-
+#[derive(Clone)]
 enum LossFunction {
     LeastSquares,
     CrossEntropy
