@@ -24,12 +24,16 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+
+mod thread_pool;
+use thread_pool::ThreadPool;
+
 /// A Feed Forward Network to be used on mnist data
 /// Input a 28*28 = 784.
 /// output a 10 length vector of probs 
 /// have a function that take the index of max element and return that to 
 /// get classification.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct FeedForwardNetwork {
     layers: Vec<Layer>,
     weights: Vec<Array2<f64>>,
@@ -90,11 +94,14 @@ impl FeedForwardNetwork {
             println!("{} {}/{}", "Epoch:".blue(), epoch + 1, epochs);
             // std::io::stdout().flush().expect("Failed to flush stdout");
             
+            // TODO: Make accessable by all threads
             let mut costs: Vec<f64> = Vec::with_capacity(n_images);
 
+            // TODO: Make accessable by all threads
             let mut number_correct_predictions: u32 = 0;
 
             // initialize gradients 
+            // TODO: Make accessable by all threads
             let mut weight_gradients: Vec<Array2<f64>> = Vec::with_capacity(n_images);
             let mut bias_gradients: Vec<Array2<f64>> = Vec::with_capacity(n_images);
 
@@ -109,6 +116,7 @@ impl FeedForwardNetwork {
 
             }
 
+            // TODO: make accesseble by all threads;
             let pb: indicatif::ProgressBar = indicatif::ProgressBar::new(n_images as u64);
 
             // TODO: parallelize this
@@ -493,7 +501,6 @@ impl FeedForwardNetwork {
 
     fn initialize_weights_and_biases(&mut self, n_0: usize) -> &Self {
 
-        // TODO: initiate weights and biases to 0 (for now)
 
         let mut  n_previous_layer: usize = n_0;
         
@@ -835,8 +842,6 @@ fn main() {
     
     // let test_image: Array2<f64> = scaled_test_images.slice(s![0, .., ..]).to_owned();
 
-
-
     // let prediction: &Array2<f64> = &network.feed_forward(test_image)[2];
 
     // println!("image of an {}", test_labels[[0]]);
@@ -872,7 +877,6 @@ mod tests {
     }
 
 
-    //TODO: Write a test for initialization of wieghts and biases.
     // 1. create neural net with add_layer
     // 2. call initialize weights and biases 
     // 3. assert shapes of w and b are correct
