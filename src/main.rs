@@ -1,3 +1,4 @@
+use std::fmt::format;
 // use std::io::Write;
 use std::{io::Read};
 use ndarray::*;
@@ -13,6 +14,7 @@ use ndarray_rand::rand_distr::num_traits::{pow, Pow};
 
 // progressbar 
 use std::time::Duration;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 
 // blas
@@ -23,6 +25,9 @@ extern crate blas_src;
 use std::thread;
 use std::thread::JoinHandle;
 use std::sync::{Arc, Mutex, MutexGuard};
+
+
+
 
 
 /// A Feed Forward Network to be used on mnist data
@@ -70,7 +75,7 @@ impl FeedForwardNetwork {
 
         println!("Using Loss Function: {} \n", loss_function_string.blue());
 
-        let mut total_training_time: Duration= Duration::new(0, 0);
+        let mut total_training_time: f64 = 0.0;
 
         //learning rate 
         let eta: f64 = 1.0;
@@ -87,24 +92,13 @@ impl FeedForwardNetwork {
 
         'epoch_loop: for epoch in 0..epochs {
 
+            let now = std::time::Instant::now();
 
             println!("{} {}/{}", "Epoch:".blue(), epoch + 1, epochs);
             // std::io::stdout().flush().expect("Failed to flush stdout");
             
-            // TODO: Make accessable by all threads
-            let mut costs: Vec<f64> = Vec::with_capacity(n_images);
-
-            // TODO: Make accessable by all threads
-            let mut n_correct_arc: Arc<Mutex<Vec<u32>>>  = Arc::new(Mutex::new(Vec::with_capacity(n_images)));
-
-            // initialize gradients 
-            // TODO: Make accessable by all threads
-
-            let (weight_gradients_arc, bias_gradients_arc) = self.create_gradients(n_images);
-
-
-            // TODO: make accesseble by all threads;
-            let pb_arc= Arc::new(Mutex::new(indicatif::ProgressBar::new(n_images as u64)));
+            
+            // Threading--------------------------------------------------------
 
             // TODO: Change num_threads to the sytems
             let n_threads: usize = 8;
@@ -116,9 +110,59 @@ impl FeedForwardNetwork {
             let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity
             (n_threads);
 
+
+
+            // DATA ACCESSIBLE BY ALL THREADS-----------------------------------
+            // Threads shoud only write to these once to increase perfomance
+            // with the exception of maybe progress bar (pb).
+
+            // initialize gradients
+
+            // TODO: Change gradients to vecs of vecs
+
+            let w_grads_full_arc: Arc<Mutex<Vec<Vec<Array2<f64>>>>> = Arc::new(Mutex::new(Vec::with_capacity(n_threads)));
+
+            let b_grads_full_arc: Arc<Mutex<Vec<Vec<Array2<f64>>>>> = Arc::new(Mutex::new(Vec::with_capacity(n_threads)));
             
 
-            // TODO: parallelize this
+            let costs_full_arc: Arc<Mutex<Vec<Vec<f64>>>> = Arc::new(Mutex::new(Vec::with_capacity(n_threads)));
+
+            // let pb_arc= Arc::new(Mutex::new(indicatif::ProgressBar::new(n_images as u64)));
+
+            // A vec of vec to minimize locking
+            let n_correct_arc: Arc<Mutex<Vec<Vec<u32>>>>  = Arc::new(Mutex::new(Vec::with_capacity(n_threads)));
+
+            // END OF DATA ACCESIBLE BY ALL THREADS-----------------------------
+
+            // Progress bar-------------------------------------
+
+            let multi_bar = MultiProgress::new();
+            
+            let sty = ProgressStyle::with_template(
+                "{elapsed} {bar:50.yellow} {pos:>7}/{len:5} {msg:10.yellow}",
+            )
+                .unwrap()
+                .progress_chars("##-");
+
+                let sty_finished = ProgressStyle::with_template(
+                    "{elapsed} {bar:50.green} {pos:>7}/{len:5} {msg:10.green}",
+                )
+                    .unwrap()
+                    .progress_chars("##-");
+
+            let mut p_bars: Vec<ProgressBar> = Vec::with_capacity(thread_batch_size);
+
+            for thread_id in 0..n_threads {
+                let pb = ProgressBar::new(thread_batch_size as u64);
+
+                pb.set_style(sty.clone());
+
+                p_bars.push(multi_bar.insert(thread_id, pb));
+                
+            }
+            
+    
+    
             for thread_id in 0..n_threads {
 
 
@@ -126,16 +170,18 @@ impl FeedForwardNetwork {
                 let mut self_clone: FeedForwardNetwork = self.clone();
                 let loss_function_clone: LossFunction = loss_function.clone();
 
-                let weight_gradients_arc = Arc::clone(&weight_gradients_arc);
+                let  w_grads_full_arc = Arc::clone(&w_grads_full_arc);
 
-                let bias_gradients_arc = Arc::clone(&bias_gradients_arc);
+                let  b_grads_full_arc = Arc::clone(&b_grads_full_arc);
 
                 let n_correct_arc = Arc::clone(&n_correct_arc);
 
-                let pb_arc = Arc::clone(&pb_arc);
+
+                let costs_full_arc = Arc::clone(&costs_full_arc);
+
 
                 
-                // TODO: Give name to thread
+                // Gives name to thread
                 let thread_builder: thread::Builder = thread::Builder::new().name(format!("Thread {}", thread_id));
 
                 let start_index: usize = thread_id * thread_batch_size;
@@ -149,13 +195,38 @@ impl FeedForwardNetwork {
 
 
 
+                let multi_bar_clone: MultiProgress = multi_bar.clone();
+
+
+                let p_bars_clone: Vec<ProgressBar> = p_bars.clone();
+
+                let pb = p_bars_clone[thread_id].clone();
+
+                let sty_finished_clone = sty_finished.clone();
+
+
+
                 let handle: JoinHandle<()> = thread_builder.spawn( move || {
 
+                    let (mut w_grads, mut b_grads) = self_clone.create_gradients();
+
+                    pb.set_position(thread_id as u64);
+
+                    // Creation of data vecs that shall be bushed to the big one
+                    // local for thread 
+
+                    let mut n_correct_local: Vec<u32> = Vec::with_capacity(thread_batch_size);
+
+                    let mut costs_local: Vec<f64> = Vec::with_capacity(thread_batch_size);
+
+                    // Start of training per thread-----------------------------
 
                     for i in 0..thread_batch_size {
+
+
+
+                        // data to be trained on in this thread
                         let image: Array2<f64> = training_images_batch.slice(s![i, .., ..]).to_owned();
-
-
                         let label: u8 = training_labels_batch[[i]];
 
                         // calculate activations for image 
@@ -184,10 +255,8 @@ impl FeedForwardNetwork {
                         }
 
 
-                        let mut n_correct = n_correct_arc.lock().expect("Failed to lock n_correct");
-
                         if predicted_label == label {
-                            n_correct.push(1);
+                            n_correct_local.push(1);
                         }
 
 
@@ -204,15 +273,16 @@ impl FeedForwardNetwork {
                         for l in (0..L).rev() {
 
                             let a_l_min_1: &Array2<f64> = &activations[l];
-        
-                            let weight_grad_x: Array2<f64> = deltas[l].dot(&a_l_min_1.t());
                             
-                            let mut w_grads = weight_gradients_arc.lock().unwrap();
-                            let mut b_grads = bias_gradients_arc.lock().unwrap();
+                            
+                            let weight_grad_x: Array2<f64> = deltas[l].dot(&a_l_min_1.t());
+
+                            let bias_grad_x: Array2<f64> = deltas[l].to_owned();
+                            
         
                             w_grads[l] = &w_grads[l] + weight_grad_x;
         
-                            b_grads[l] = deltas[l].to_owned();
+                            b_grads[l] = &b_grads[l] + bias_grad_x;
                             
         
                         }
@@ -242,13 +312,42 @@ impl FeedForwardNetwork {
                             },
                         };
 
-                        let pb = pb_arc.lock().unwrap();
+                        costs_local.push(cost);
 
+                        
+                        pb.set_message(format!("{} training", thread::current().name().unwrap()));
                         pb.inc(1);
+                        
 
 
                     } // end of for i
 
+                    
+
+                    // Lock and Push all data here------------------------------
+                    let mut n_correct_full = n_correct_arc.lock().expect("Failed to lock n_correct");
+
+                    n_correct_full.push(n_correct_local);
+
+
+                    let mut costs_full = costs_full_arc.lock().expect("Failed to lock costs");
+
+                    costs_full.push(costs_local);
+
+                    //push local gradients of thread(id) 
+                    let mut w_grads_full = w_grads_full_arc.lock().unwrap();
+                    w_grads_full.push(w_grads);
+
+                    let mut b_grads_full = b_grads_full_arc.lock().unwrap();
+                    b_grads_full.push(b_grads);
+
+                    // let pb = pb_arc.lock().unwrap();
+
+                    // pb.inc(thread_batch_size as u64);
+
+                    pb.set_style(sty_finished_clone);
+                    pb.tick();
+                    pb.finish_with_message(format!("{} finnished", thread::current().name().unwrap()));
 
                 }).unwrap();
 
@@ -262,40 +361,76 @@ impl FeedForwardNetwork {
                 handle.join().unwrap();
             }
 
+            // multi_bar.clear().unwrap();
+
 
             // Update weights W^l = W^l - grad(W^l)
             // remember grad(W^l) = mean(dC_x/dW^l)
 
-            let weight_gradients = weight_gradients_arc.lock().unwrap();
+            // Vector of gradients from each thread
+            let w_grads_from_threads = w_grads_full_arc.lock().expect("Failed to lock w_grads");
 
-            let bias_gradients = bias_gradients_arc.lock().unwrap();
+            let b_grads_from_threads = b_grads_full_arc.lock().expect("Failed to lock b_grads");
 
-            self.sgd(&weight_gradients, &*bias_gradients, n_images, &eta);
+            let (mut weight_gradients, mut bias_gradients) = self.create_gradients();
+
+            for thread_id in 0..n_threads {
+
+                let w_grads_from_thread = &w_grads_from_threads[thread_id];
+
+                let b_grads_from_thread = &b_grads_from_threads[thread_id];
+
+                for l in 0..weight_gradients.len() {
+
+                    weight_gradients[l] = &weight_gradients[l] + &w_grads_from_thread[l];
+
+                    bias_gradients[l] = &bias_gradients[l] + &b_grads_from_thread[l];
+
+                }
+
+            }
+
+            
+
+            self.sgd(&weight_gradients, &bias_gradients, n_images, &eta);
 
 
             
             // Update weights b^l = b^l - grad(b^l)
             // grad(b^l) = mean(dC_x/db^l) = mean(delta^l_x)
 
-            let n_correct = n_correct_arc.lock().unwrap();
+            let n_correct_vec_vec = n_correct_arc.lock().unwrap();
 
-            let n_correct = &*n_correct;
+            // let n_correct = &*n_correct;
 
-            let n_correct: u32 = n_correct.iter().sum();
+            let mut n_correct: u32 = 0;
 
-            let accuracy = (n_correct) as f64 / n_images as f64;
+            for n_correct_vec in n_correct_vec_vec.iter() {
+                let n: u32 = n_correct_vec.iter().sum();
+                n_correct += n;
+            }    
+
+            let accuracy: f64 = (n_correct) as f64 / n_images as f64;
+
+            let mut total_cost = 0.0;
             
-            let total_cost: f64 = costs.iter().sum();
+
+            let costs_full = costs_full_arc.lock().unwrap();
+
+            for costs in costs_full.iter() {
+
+                let cost: f64 = costs.iter().sum();
+                total_cost += cost;
+
+            }
+            
 
             let loss: f64 = total_cost / n_images as f64;
 
-            let pb = pb_arc.lock().unwrap();
 
-            pb.finish();
+            let epoch_time: f64 =  now.elapsed().as_secs_f64();
 
-            let epoch_time: f64 =  pb.elapsed().as_secs_f64();
-
-            // let epoch_time: f64 = epoch_time.try_into().expect("Failed to convert");
+            total_training_time += epoch_time;
 
             println!(
                 "{} {:.2}s, {} {:.2}, {}: {:.2}", 
@@ -307,14 +442,14 @@ impl FeedForwardNetwork {
                 loss
             );
 
-            total_training_time += pb.elapsed();
+            // total_training_time += pb.elapsed();
             
             print!("\n");
 
         } // end of epoch loop
 
 
-        println!("\n{} {:?}", "Finished training in:".green(), total_training_time);
+        println!("\n{} {:.2}", "Finished training in:".green(), total_training_time);
 
     }
 
@@ -613,11 +748,14 @@ impl FeedForwardNetwork {
 
     }
 
-    fn create_gradients(&self, n_images: usize) -> (Arc<Mutex<Vec<Array2<f64>>>>, Arc<Mutex<Vec<Array2<f64>>>>) {
+    /// Create gradients. 
+    /// Creates W_grad a vector of W^l_grad
+    fn create_gradients(&self) -> (Vec<Array2<f64>>, Vec<Array2<f64>>) {
 
-        let mut weight_gradients: Vec<Array2<f64>> = Vec::with_capacity(n_images);
+
+        let mut weight_gradients: Vec<Array2<f64>> = Vec::with_capacity(self.weights.len());
             
-        let mut bias_gradients: Vec<Array2<f64>> = Vec::with_capacity(n_images);
+        let mut bias_gradients: Vec<Array2<f64>> = Vec::with_capacity(self.weights.len());
 
         for l in 0..self.weights.len() {
 
@@ -629,10 +767,6 @@ impl FeedForwardNetwork {
             bias_gradients.push(Array2::<f64>::zeros([bias_shape[0], bias_shape[1]]));
 
         }
-
-        let weight_gradients = Arc::new(Mutex::new(weight_gradients));
-
-        let bias_gradients = Arc::new(Mutex::new(bias_gradients));
 
         return (weight_gradients, bias_gradients);
 
