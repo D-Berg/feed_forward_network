@@ -25,9 +25,6 @@ use std::thread::JoinHandle;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 
-mod thread_pool;
-use thread_pool::ThreadPool;
-
 /// A Feed Forward Network to be used on mnist data
 /// Input a 28*28 = 784.
 /// output a 10 length vector of probs 
@@ -109,16 +106,20 @@ impl FeedForwardNetwork {
             // TODO: make accesseble by all threads;
             let pb_arc= Arc::new(Mutex::new(indicatif::ProgressBar::new(n_images as u64)));
 
+            // TODO: Change num_threads to the sytems
+            let n_threads: usize = 8;
 
-            let pool = ThreadPool::new(8);
+            //number of images each thread will take care of
+            // TODO: change to implement modulo so we dont forget an image
+            let thread_batch_size: usize = n_images / n_threads;
+
+            let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity
+            (n_threads);
+
+            
 
             // TODO: parallelize this
-            for i in 0..n_images {
-
-                let image: Array2<f64> = training_images.slice(s![i, .., ..]).to_owned();
-                
-
-                let label: u8 = training_labels[[i]];
+            for thread_id in 0..n_threads {
 
 
                 // Think clones only live as long as its thread do
@@ -133,104 +134,134 @@ impl FeedForwardNetwork {
 
                 let pb_arc = Arc::clone(&pb_arc);
 
-                pool.execute( move || {
-                    // calculate activations for image 
-                    let activations: Vec<Array2<f64>> = self_clone.feed_forward(image);
+                
+                // TODO: Give name to thread
+                let thread_builder: thread::Builder = thread::Builder::new().name(format!("Thread {}", thread_id));
 
-                    // TODO: Move this to its own function
-                    let predictions_probs: &Array2<f64> = &activations[activations.len()-1];
+                let start_index: usize = thread_id * thread_batch_size;
 
-                    let predictions_len: usize = predictions_probs.shape()[0];
+                let end_index: usize = (thread_id + 1) * thread_batch_size;
 
-                    let mut max_prob: f64 = 0.0;
 
-                    let mut predicted_label: u8 = 0;
+                let training_images_batch: Array3<f64> = training_images.slice(s![start_index..end_index, .., ..]).to_owned();
 
-                    for j in 0..predictions_len {
+                let training_labels_batch: Array1<u8> = training_labels.slice(s![start_index..end_index]).to_owned();
 
-                        let prediction_prob: f64 = predictions_probs[[j, 0]];
 
-                        if prediction_prob >=  max_prob {
-                            predicted_label = j as u8;
-                            max_prob = prediction_prob;
+
+                let handle: JoinHandle<()> = thread_builder.spawn( move || {
+
+
+                    for i in 0..thread_batch_size {
+                        let image: Array2<f64> = training_images_batch.slice(s![i, .., ..]).to_owned();
+
+
+                        let label: u8 = training_labels_batch[[i]];
+
+                        // calculate activations for image 
+                        let activations: Vec<Array2<f64>> = self_clone.feed_forward(image);
+
+                         // TODO: Move this to its own function
+                        let predictions_probs: &Array2<f64> = &activations[activations.len()-1];
+
+                        let predictions_len: usize = predictions_probs.shape()[0];
+
+
+                        let mut max_prob: f64 = 0.0;
+
+                        let mut predicted_label: u8 = 0;
+
+                        for j in 0..predictions_len {
+
+                            let prediction_prob: f64 = predictions_probs[[j, 0]];
+
+                            if prediction_prob >=  max_prob {
+                                predicted_label = j as u8;
+                                max_prob = prediction_prob;
+
+                            }
 
                         }
 
-                    }
 
-                    let mut n_correct = n_correct_arc.lock().expect("Failed to lock n_correct");
+                        let mut n_correct = n_correct_arc.lock().expect("Failed to lock n_correct");
 
-
-
-                    if predicted_label == label {
-                        n_correct.push(1);
-                    }
-
-                    // backpropegate image in network to get deltas
-                    let deltas: Vec<Array2<f64>> = self_clone.backpropegate(
-                        &activations, 
-                        &label, 
-                        &loss_function_clone
-                    );
+                        if predicted_label == label {
+                            n_correct.push(1);
+                        }
 
 
-                    // calculate gradient for dC_x/dW and dC_x/db (matrix form)
-                    let L = self_clone.layers.len();
+                        // backpropegate image in network to get deltas
+                        let deltas: Vec<Array2<f64>> = self_clone.backpropegate(
+                            &activations, 
+                            &label, 
+                            &loss_function_clone
+                        );
 
+                        // calculate gradient for dC_x/dW and dC_x/db (matrix form)
+                        let L = self_clone.layers.len();
 
-                    for l in (0..L).rev() {
+                        for l in (0..L).rev() {
 
-                        let a_l_min_1: &Array2<f64> = &activations[l];
-    
-                        let weight_grad_x: Array2<f64> = deltas[l].dot(&a_l_min_1.t());
-                        
-                        let mut w_grads = weight_gradients_arc.lock().unwrap();
-                        let mut b_grads = bias_gradients_arc.lock().unwrap();
-    
-                        w_grads[l] = &w_grads[l] + weight_grad_x;
-    
-                        b_grads[l] = deltas[l].to_owned();
-                        
-    
-                    }
-
-                    // creates vec [0, 0, 0 , 1, ..., 0]
-                    let mut label_vec: Vec<f64> = vec![0.0; 10]; 
-
-                    label_vec[label as usize] = 1.0;
-
-                    let y: Array2<f64> = Array2::<f64>::from_shape_vec((label_vec.len(), 1), label_vec).expect("failed to create y");
-                    
-                    let a_L = &activations[activations.len()-1];
-
-
-                    let cost: f64 = match loss_function_clone {
-                        LeastSquares => {
-    
-                            (a_L - y).mapv(|a: f64| a.pow(2)).sum()
+                            let a_l_min_1: &Array2<f64> = &activations[l];
+        
+                            let weight_grad_x: Array2<f64> = deltas[l].dot(&a_l_min_1.t());
                             
-                        },
-                        CrossEntropy =>{
+                            let mut w_grads = weight_gradients_arc.lock().unwrap();
+                            let mut b_grads = bias_gradients_arc.lock().unwrap();
+        
+                            w_grads[l] = &w_grads[l] + weight_grad_x;
+        
+                            b_grads[l] = deltas[l].to_owned();
+                            
+        
+                        }
+
+
+                        // creates vec [0, 0, 0 , 1, ..., 0]
+                        let mut label_vec: Vec<f64> = vec![0.0; 10]; 
+
+                        label_vec[label as usize] = 1.0;
+
+                        let y: Array2<f64> = Array2::<f64>::from_shape_vec((label_vec.len(), 1), label_vec).expect("failed to create y");
+                    
+                        let a_L = &activations[activations.len()-1];
+
+
+                        let cost: f64 = match loss_function_clone {
+                            LeastSquares => {
+    
+                                (a_L - y).mapv(|a: f64| a.pow(2)).sum()
+                            
+                            },
+                            CrossEntropy =>{
     
     
     
                              -a_L[[label as usize, 0]].ln()
-                        },
-                    };
+                            },
+                        };
 
-                    let pb = pb_arc.lock().unwrap();
+                        let pb = pb_arc.lock().unwrap();
 
-                    pb.inc(1);
+                        pb.inc(1);
 
-                });
 
-                //END OF THREADPOOL
+                    } // end of for i
+
+
+                }).unwrap();
+
+                handles.push(handle);
                 
 
+            } // end of thread creation
+
+            // join all threads
+            for handle in handles {
+                handle.join().unwrap();
             }
 
-            
-            
 
             // Update weights W^l = W^l - grad(W^l)
             // remember grad(W^l) = mean(dC_x/dW^l)
@@ -261,6 +292,7 @@ impl FeedForwardNetwork {
             let pb = pb_arc.lock().unwrap();
 
             pb.finish();
+
             let epoch_time: f64 =  pb.elapsed().as_secs_f64();
 
             // let epoch_time: f64 = epoch_time.try_into().expect("Failed to convert");
@@ -278,7 +310,8 @@ impl FeedForwardNetwork {
             total_training_time += pb.elapsed();
             
             print!("\n");
-        }
+
+        } // end of epoch loop
 
 
         println!("\n{} {:?}", "Finished training in:".green(), total_training_time);
