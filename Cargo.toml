@@ -6,14 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 
-[features]
-openblas = ["blas-src/openblas"]
-accelerate = ["blas-src/accelerate"]
-
 [dependencies]
-ndarray = {version = "0.15.6", features = ["blas"]}
-blas-src = { version = "0.9.0"}
-openblas-src = { version = "0.10.8", features = ["system"] }
-ndarray-rand = "0.14.0"
+tch = "0.13.0"
 colored = "2.0.0"
 indicatif = "0.17.5"

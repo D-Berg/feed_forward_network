@@ -12,8 +12,7 @@
                 "args": [
                     "build",
                     "--bin=feed_forward_network",
-                    "--package=feed_forward_network",
-                    "--features=accelerate"
+                    "--package=feed_forward_network"
                 ],
                 "filter": {
                     "name": "feed_forward_network",
