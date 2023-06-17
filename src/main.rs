@@ -260,7 +260,7 @@ fn main() {
     let pb = ProgressBar::new(n_epochs as u64);
 
     let sty = ProgressStyle::with_template(
-        "{elapsed} {bar:50.yellow} {pos:>7}/{len:5} {msg:10.yellow}",
+        "Eta: {eta} {bar:50.yellow} {pos:>7}/{len:5} {elapsed:6} {msg:10.yellow}",
     )
     .unwrap();
 
@@ -278,7 +278,7 @@ fn main() {
         pb.set_message(
             format!(
                 "epoch: {:4}, Train loss: {:8.5} test acc: {:5.2}%",
-                epoch,
+                epoch + 1,
                 f64::try_from(&loss).expect("Failed to conv to f64"),
                 100.0 * f64::try_from(&test_accuracy).expect("Failed to conv to f64")
             )
